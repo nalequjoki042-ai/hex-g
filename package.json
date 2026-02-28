@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "colyseus.js": "^0.16.22",
+    "ws": "^8.19.0"
+  }
+}

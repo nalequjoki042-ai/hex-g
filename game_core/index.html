@@ -333,6 +333,10 @@
         <div id="energy-text" style="font-size: 12px; color: #4ecca3; margin-bottom: 10px;">Энергия: 10/10</div>
         
         <div id="leaderboard">
+            <div style="font-weight: bold; margin-bottom: 8px; color: #e94560;">Ресурсы:</div>
+            <div id="player-resources" style="font-size: 14px; margin-bottom: 10px;">
+                Дерево: 0 | Камень: 0 | Скрап: 0
+            </div>
             <div style="font-weight: bold; margin-bottom: 8px; color: #e94560;">Топ захватчиков:</div>
             <div id="leader-list">
                 <!-- Сюда попадут игроки -->
@@ -382,6 +386,7 @@
         <div class="context-item header" id="context-title">Объект: Гекс</div>
         <div class="context-item" onclick="handleContextAction('info')">ℹ️ Информация</div>
         <div class="context-item" onclick="handleContextAction('claim')">🚩 Захватить</div>
+        <div class="context-item" id="context-build-tc" onclick="handleContextAction('buildTC')">🔨 Построить Шкаф (200 Дерева)</div>
     </div>
 
     <div id="menu-overlay" onclick="closeAllMenus()"></div>
@@ -445,9 +450,10 @@
         function getOriginX() { return (canvas.width / 2) + camX; }
         function getOriginY() { return (canvas.height / 2 + 50) + camY; }
 
-        // Теперь здесь мы храним объекты {owner, color, type}
+        // Теперь здесь мы храним объекты {owner, color, type, building}
         const capturedHexes = new Map();
         const clientUnits = new Map();
+        let playerResources = { wood: 0, stone: 0, scrap: 0 };
 
         // VFX arrays
         let floatingTexts = [];
@@ -455,7 +461,7 @@
         let projectiles = [];
         let screenShake = 0;
 
-        function drawHex(q, r, color, text = "", type = "plain") {
+        function drawHex(q, r, color, text = "", type = "plain", building = undefined) {
             const hSize = getHexSize();
             const oX = getOriginX();
             const oY = getOriginY();
@@ -499,13 +505,22 @@
                 else if (type === 'mountain') icon = "⛰️";
                 else if (type === 'ruins') icon = "☢️";
 
-                if (icon) {
-                    ctx.fillText(icon, x, y);
-                } else if (text) {
-                    // Draw owner initial if it's a claimed plain hex
-                    ctx.globalAlpha = 1.0;
-                    ctx.font = `bold ${Math.floor(16 * zoom)}px Courier New`;
-                    ctx.fillText(text.charAt(0).toUpperCase(), x, y);
+                if (building === 'TC') {
+                    // Draw Town Cabinet
+                    ctx.fillStyle = '#8B4513';
+                    ctx.fillRect(x - 10*zoom, y - 10*zoom, 20*zoom, 20*zoom);
+                    ctx.strokeStyle = '#fff';
+                    ctx.strokeRect(x - 10*zoom, y - 10*zoom, 20*zoom, 20*zoom);
+                    ctx.fillText("🏛️", x, y);
+                } else {
+                    if (icon) {
+                        ctx.fillText(icon, x, y);
+                    } else if (text) {
+                        // Draw owner initial if it's a claimed plain hex
+                        ctx.globalAlpha = 1.0;
+                        ctx.font = `bold ${Math.floor(16 * zoom)}px Courier New`;
+                        ctx.fillText(text.charAt(0).toUpperCase(), x, y);
+                    }
                 }
                 ctx.globalAlpha = 1.0;
             }
@@ -616,11 +631,19 @@
                     const key = `${q},${r}`;
                     if (capturedHexes.has(key)) {
                         const data = capturedHexes.get(key);
-                        drawHex(q, r, data.color, data.owner, data.type);
+                        // Fog of War rendering: Data exists only if visible to player (because of @filter on server)
+                        // If color/owner is not synced, we draw it as unexplored or dim.
+                        // Wait, server @filter returns default schema state if filtered.
+                        // So owner might be "", type might be "".
+
+                        let hexColor = data.color || '#1e1c1a';
+                        let hexType = data.type || 'plain';
+
+                        drawHex(q, r, hexColor, data.owner, hexType, data.building);
                     } else {
-                        // Рисуем пустую сетку в радиусе 50 от центра
+                        // Unexplored/Fog area
                         if (Math.abs(q) <= 50 && Math.abs(r) <= 50 && Math.abs(-q-r) <= 50) {
-                            drawHex(q, r, '#1e1c1a', "", "plain");
+                            drawHex(q, r, '#111', "", "plain");
                         }
                     }
                 }
@@ -634,7 +657,9 @@
                     const y = oY + hSize * 3 / 2 * r;
                     if (x > -screenPadding && x < canvas.width + screenPadding &&
                         y > -screenPadding && y < canvas.height + screenPadding) {
-                        drawHex(q, r, data.color, data.owner, data.type);
+                        let hexColor = data.color || '#1e1c1a';
+                        let hexType = data.type || 'plain';
+                        drawHex(q, r, hexColor, data.owner, hexType, data.building);
                     }
                 }
             });
@@ -928,14 +953,20 @@
                 
                 document.querySelector('.menu-header').innerText = "Информация о секторе";
                 document.getElementById('stat-name').innerText = `Гекс [${key}]`;
-                document.getElementById('stat-hexes').innerText = data ? data.owner : "Свободен";
-                document.getElementById('stat-energy').innerText = data ? "Занят" : "Доступен";
-                document.getElementById('stat-color').style.background = data ? data.color : "#16213e";
+                document.getElementById('stat-hexes').innerText = data && data.owner ? data.owner : "Свободен";
+                document.getElementById('stat-energy').innerText = data && data.building ? `Здание: ${data.building}` : "Доступен";
+                document.getElementById('stat-color').style.background = data && data.color ? data.color : "#16213e";
                 
                 menu.classList.add('active');
                 overlay.classList.add('active');
             } else if (action === 'claim') {
                 gameRoom.send("claimHex", { q, r });
+            } else if (action === 'buildTC') {
+                if (window.selectedUnitId) {
+                    gameRoom.send("buildTC", { unitId: window.selectedUnitId, q, r });
+                } else {
+                    showToast("Выберите юнита!", "error");
+                }
             }
             closeContextMenu();
         }
@@ -967,10 +998,27 @@
                 document.getElementById('player-name').innerText = `Командир: ${myName}`;
                 document.getElementById('debug-info').innerText = 'Связь установлена!';
 
+                // Синхронизация ресурсов игрока
+                gameRoom.state.players.onAdd((playerData, playerName) => {
+                    if (playerName === myName) {
+                        playerResources.wood = playerData.wood || 0;
+                        playerResources.stone = playerData.stone || 0;
+                        playerResources.scrap = playerData.scrap || 0;
+                        document.getElementById('player-resources').innerText = `Дерево: ${playerResources.wood} | Камень: ${playerResources.stone} | Скрап: ${playerResources.scrap}`;
+
+                        playerData.onChange(() => {
+                            playerResources.wood = playerData.wood || 0;
+                            playerResources.stone = playerData.stone || 0;
+                            playerResources.scrap = playerData.scrap || 0;
+                            document.getElementById('player-resources').innerText = `Дерево: ${playerResources.wood} | Камень: ${playerResources.stone} | Скрап: ${playerResources.scrap}`;
+                        });
+                    }
+                });
+
                 // Первичная синхронизация существующих данных
                 gameRoom.state.hexes.forEach((hexData, hexId) => {
                     console.log("Initial hex:", hexId, hexData.owner);
-                    capturedHexes.set(hexId, { owner: hexData.owner, color: hexData.color, type: hexData.type });
+                    capturedHexes.set(hexId, { owner: hexData.owner, color: hexData.color, type: hexData.type, building: hexData.building });
                 });
                 drawMap();
 
@@ -989,18 +1037,18 @@
                 // При добавлении нового гекса
                 gameRoom.state.hexes.onAdd((hexData, hexId) => {
                     console.log("Hex added:", hexId, hexData.owner);
-                    capturedHexes.set(hexId, { owner: hexData.owner, color: hexData.color, type: hexData.type });
+                    capturedHexes.set(hexId, { owner: hexData.owner, color: hexData.color, type: hexData.type, building: hexData.building });
                     
                     // Если это наш захват (но не при первой загрузке)
                     if (hexData.owner === myName && document.getElementById('debug-info').innerText === 'Связь установлена!') {
-                        showToast(`Сектор ${hexId} захвачен!`, 'success');
-                    } else if (hexData.owner !== myName && document.getElementById('debug-info').innerText === 'Связь установлена!') {
-                        showToast(`${hexData.owner} захватил гекс!`, 'info');
+                        showToast(`Сектор ${hexId} захвачен/открыт!`, 'success');
+                    } else if (hexData.owner && hexData.owner !== myName && document.getElementById('debug-info').innerText === 'Связь установлена!') {
+                        // showToast(`${hexData.owner} захватил гекс!`, 'info'); // Can be noisy with fog of war
                     }
 
                     hexData.onChange(() => {
                         console.log("Hex updated:", hexId, hexData.owner);
-                        capturedHexes.set(hexId, { owner: hexData.owner, color: hexData.color, type: hexData.type });
+                        capturedHexes.set(hexId, { owner: hexData.owner, color: hexData.color, type: hexData.type, building: hexData.building });
                         drawMap();
                         
                         // Обновляем статистику если меню открыто
@@ -1059,6 +1107,11 @@
                     }, 2000);
                 });
 
+                gameRoom.onMessage("success", (data) => {
+                    tg.HapticFeedback.notificationOccurred('success');
+                    showToast(data.message, 'success');
+                });
+
                 drawMap();
 
             } catch (e) {
@@ -1111,6 +1164,13 @@
             menu.style.display = 'block';
             menu.style.left = `${e.clientX}px`;
             menu.style.top = `${e.clientY}px`;
+
+            // Show/Hide Build TC option
+            if (window.selectedUnitId && (!data || !data.building)) {
+                document.getElementById('context-build-tc').style.display = 'block';
+            } else {
+                document.getElementById('context-build-tc').style.display = 'none';
+            }
 
             // Обновляем заголовок в меню
             document.getElementById('context-title').innerText = `Гекс [${key}]`;
