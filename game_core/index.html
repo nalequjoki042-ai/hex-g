@@ -434,9 +434,13 @@
         let camX = 0;
         let camY = 0;
         let zoom = 1.0;
-        const minZoom = 0.3;
-        const maxZoom = 3.0;
-        const panSpeed = 5;
+        const minZoom = 0.5; // Ограничили мин. зум, чтобы не рендерить всю карту
+        const maxZoom = 2.0;
+        const panSpeed = 10;
+
+        // Лимиты камеры для карты радиусом ~50 гексов
+        const MAP_RADIUS_HEX = 50;
+        const MAP_RADIUS_PX = MAP_RADIUS_HEX * 35 * 1.5;
         
         const keysPressed = {};
         let isPanning = false;
@@ -505,22 +509,26 @@
                 else if (type === 'mountain') icon = "⛰️";
                 else if (type === 'ruins') icon = "☢️";
 
+                if (icon) {
+                    ctx.fillText(icon, x, y - 5*zoom);
+                } else if (text && !building) {
+                    // Draw owner initial if it's a claimed plain hex
+                    ctx.globalAlpha = 1.0;
+                    ctx.font = `bold ${Math.floor(16 * zoom)}px Courier New`;
+                    ctx.fillText(text.charAt(0).toUpperCase(), x, y);
+                }
+
                 if (building === 'TC') {
                     // Draw Town Cabinet
+                    ctx.globalAlpha = 1.0;
                     ctx.fillStyle = '#8B4513';
-                    ctx.fillRect(x - 10*zoom, y - 10*zoom, 20*zoom, 20*zoom);
-                    ctx.strokeStyle = '#fff';
-                    ctx.strokeRect(x - 10*zoom, y - 10*zoom, 20*zoom, 20*zoom);
-                    ctx.fillText("🏛️", x, y);
-                } else {
-                    if (icon) {
-                        ctx.fillText(icon, x, y);
-                    } else if (text) {
-                        // Draw owner initial if it's a claimed plain hex
-                        ctx.globalAlpha = 1.0;
-                        ctx.font = `bold ${Math.floor(16 * zoom)}px Courier New`;
-                        ctx.fillText(text.charAt(0).toUpperCase(), x, y);
-                    }
+                    ctx.fillRect(x - 15*zoom, y - 10*zoom, 30*zoom, 25*zoom);
+                    ctx.strokeStyle = '#222';
+                    ctx.lineWidth = 2 * zoom;
+                    ctx.strokeRect(x - 15*zoom, y - 10*zoom, 30*zoom, 25*zoom);
+
+                    ctx.font = `${Math.floor(18 * zoom)}px Arial`;
+                    ctx.fillText("🏛️", x, y + 2*zoom);
                 }
                 ctx.globalAlpha = 1.0;
             }
@@ -536,7 +544,7 @@
 
             // Тень
             ctx.beginPath();
-            ctx.ellipse(uX, uY + drawSize, drawSize*0.8, drawSize*0.3, 0, 0, Math.PI * 2);
+            ctx.ellipse(uX, uY + drawSize, drawSize * 0.8, drawSize * 0.32, 0, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(0,0,0,0.4)';
             ctx.fill();
 
@@ -546,7 +554,7 @@
             ctx.fillStyle = '#222';
             ctx.fill();
             ctx.lineWidth = 4 * zoom;
-            // Highlight if selected
+
             if (window.selectedUnitId === unit.id) {
                 ctx.strokeStyle = '#fff';
             } else {
@@ -555,10 +563,11 @@
             ctx.stroke();
 
             // Иконка (В зависимости от типа)
-            ctx.font = `${Math.floor(24*zoom)}px Arial`;
+            ctx.font = `${Math.floor(24 * zoom)}px Arial`;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             let icon = unit.type === 'farmer' ? "🪓" : "🔫";
+            if (unit.type === 'founder') icon = "👤";
             ctx.fillText(icon, uX, uY + 2 * zoom);
 
             drawUnitUI(ctx, unit, uX, uY, drawSize);
@@ -566,7 +575,7 @@
 
         function drawUnitUI(ctx, unit, uX, uY, drawSize) {
             // Полоска HP
-            let hpX = uX - drawSize, hpY = uY - drawSize*1.6;
+            let hpX = uX - drawSize, hpY = uY - drawSize * 1.6;
             let hpWidth = drawSize * 2;
             let hpHeight = 6 * zoom;
 
@@ -576,17 +585,17 @@
             ctx.fillStyle = hpPercent > 0.5 ? '#4caf50' : '#ff9800';
             ctx.fillRect(hpX, hpY, hpWidth * hpPercent, hpHeight);
             ctx.strokeStyle = '#222';
-            ctx.lineWidth = 1;
+            ctx.lineWidth = 1 * zoom;
             ctx.strokeRect(hpX, hpY, hpWidth, hpHeight);
 
             // Инвентарь
             if (unit.inventory !== undefined && unit.maxInventory > 0) {
                 ctx.fillStyle = "rgba(0,0,0,0.6)";
-                ctx.roundRect(uX - drawSize*1.4, uY + drawSize*1.2, drawSize*2.8, 18*zoom, 4*zoom);
+                ctx.roundRect(uX - drawSize * 1.4, uY + drawSize * 1.2, drawSize * 2.8, 18 * zoom, 4 * zoom);
                 ctx.fill();
-                ctx.font = `bold ${Math.floor(12*zoom)}px Courier New`;
+                ctx.font = `bold ${Math.floor(12 * zoom)}px Courier New`;
                 ctx.fillStyle = "#e6a822";
-                ctx.fillText(`🎒 ${Math.floor(unit.inventory)}/${unit.maxInventory}`, uX, uY + drawSize*1.6);
+                ctx.fillText(`🎒 ${Math.floor(unit.inventory)}/${unit.maxInventory}`, uX, uY + drawSize * 1.6);
             }
         }
 
@@ -697,21 +706,27 @@
                 ctx.globalAlpha = 1.0;
             }
 
-            // --- ОТРИСОВКА ТЕКСТА УРОНА / СБОРА ---
+            // --- ОТРИСОВКА ТЕКСТА УРОНА / СБОРА (VFX) ---
             for (let i = floatingTexts.length - 1; i >= 0; i--) {
                 let t = floatingTexts[i];
-                ctx.globalAlpha = t.alpha;
-                ctx.font = `bold ${Math.floor(20 * t.scale * zoom)}px Courier New`;
-                ctx.fillStyle = t.color;
-                ctx.strokeStyle = '#111'; ctx.lineWidth = 4 * zoom;
+                ctx.globalAlpha = Math.max(0, t.alpha);
 
+                // Using scale if exists, else default to 1
+                let scale = t.scale || 1.0;
+                ctx.font = `bold ${Math.floor(20 * scale * zoom)}px Courier New`;
+                ctx.fillStyle = t.color || '#fff';
+                ctx.strokeStyle = '#111';
+                ctx.lineWidth = 4 * zoom;
+
+                // Position based on world coordinates
                 let tX = oX + t.x * zoom;
                 let tY = oY + t.y * zoom;
                 ctx.strokeText(t.text, tX, tY);
                 ctx.fillText(t.text, tX, tY);
                 ctx.globalAlpha = 1.0;
 
-                t.y -= 1.2; t.alpha -= 0.02;
+                t.y -= 1.5;
+                t.alpha -= 0.02;
                 if (t.alpha <= 0) floatingTexts.splice(i, 1);
             }
 
@@ -728,15 +743,74 @@
             if (keysPressed['KeyA'] || keysPressed['ArrowLeft']) { camX += panSpeed; moved = true; }
             if (keysPressed['KeyD'] || keysPressed['ArrowRight']) { camX -= panSpeed; moved = true; }
 
+            if (moved) constrainCamera();
+
             // Всегда рисуем из-за VFX и анимации юнитов
             drawMap();
             requestAnimationFrame(update);
         }
+
+        function constrainCamera() {
+            // Ограничение камеры в пределах карты
+            const maxOffset = MAP_RADIUS_PX * zoom;
+            if (camX > maxOffset) camX = maxOffset;
+            if (camX < -maxOffset) camX = -maxOffset;
+            if (camY > maxOffset) camY = maxOffset;
+            if (camY < -maxOffset) camY = -maxOffset;
+        }
         update();
 
         // --- ОБРАБОТКА ВВОДА ---
-        window.addEventListener('keydown', (e) => { keysPressed[e.code] = true; });
+        window.addEventListener('keydown', (e) => {
+            keysPressed[e.code] = true;
+            if (e.code === 'F1' || e.code === 'KeyC') {
+                e.preventDefault();
+                centerCameraOnPlayer();
+            }
+        });
         window.addEventListener('keyup', (e) => { keysPressed[e.code] = false; });
+
+        function centerCameraOnPlayer() {
+            // Ищем сначала выбранного юнита, потом любого своего юнита, потом свой ТС
+            let targetX = null;
+            let targetY = null;
+
+            if (window.selectedUnitId && clientUnits.has(window.selectedUnitId)) {
+                let u = clientUnits.get(window.selectedUnitId);
+                targetX = u.x;
+                targetY = u.y;
+            } else {
+                // Ищем первого своего юнита
+                for (let [id, u] of clientUnits) {
+                    if (u.owner === myName) {
+                        targetX = u.x;
+                        targetY = u.y;
+                        break;
+                    }
+                }
+
+                // Если юнитов нет, ищем ТС
+                if (targetX === null) {
+                    for (let [id, hex] of capturedHexes) {
+                        if (hex.owner === myName && hex.building === 'TC') {
+                            const [q, r] = id.split(',').map(Number);
+                            const hSize = hexSizeBase;
+                            targetX = hSize * Math.sqrt(3) * (q + r / 2);
+                            targetY = hSize * 3 / 2 * r;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (targetX !== null && targetY !== null) {
+                // Центрируем камеру (camX/camY - это смещение origin)
+                camX = -targetX * zoom;
+                camY = -targetY * zoom;
+                constrainCamera();
+                drawMap();
+            }
+        }
 
         // Колесико мыши (Zoom)
         canvas.addEventListener('wheel', (e) => {
@@ -775,6 +849,7 @@
                 const dy = e.clientY - lastMouseY;
                 camX += dx;
                 camY += dy;
+                constrainCamera();
                 lastMouseX = e.clientX;
                 lastMouseY = e.clientY;
                 drawMap();
@@ -1025,6 +1100,13 @@
                 // Синхронизация юнитов
                 gameRoom.state.units.onAdd((unitData, unitId) => {
                     clientUnits.set(unitId, unitData);
+
+                    // Center camera on the very first unit we receive if it belongs to us
+                    if (unitData.owner === myName && document.getElementById('debug-info').innerText === 'Связь установлена!' && clientUnits.size === 1) {
+                        // wait a bit for rendering to initialize
+                        setTimeout(centerCameraOnPlayer, 500);
+                    }
+
                     unitData.onChange(() => {
                         clientUnits.set(unitId, unitData);
                     });
@@ -1110,6 +1192,24 @@
                 gameRoom.onMessage("success", (data) => {
                     tg.HapticFeedback.notificationOccurred('success');
                     showToast(data.message, 'success');
+                });
+
+                gameRoom.onMessage("vfx", (data) => {
+                    // Create floating text at specific location
+                    // If q,r provided, map to x,y
+                    if (data.q !== undefined && data.r !== undefined) {
+                        const hSize = 35;
+                        const x = hSize * Math.sqrt(3) * (data.q + data.r / 2);
+                        const y = hSize * 3 / 2 * data.r;
+                        floatingTexts.push({
+                            text: data.text,
+                            x: x + (Math.random() * 20 - 10), // slight random offset
+                            y: y - 20,
+                            alpha: 1.0,
+                            color: data.color || '#4ecca3',
+                            scale: data.scale || 1.0
+                        });
+                    }
                 });
 
                 drawMap();

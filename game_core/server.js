@@ -355,6 +355,18 @@ class HexRoom extends Room {
                         unit.inventory += actualHarvest;
                         currentHex.resourceAmount -= actualHarvest;
 
+                        // Send VFX to owner
+                        const ownerClient = this.clients.find(c => c.userData.name === unit.owner);
+                        if (ownerClient) {
+                            let resIcon = currentHex.type === 'forest' ? '🪵' : '🪨';
+                            ownerClient.send("vfx", {
+                                q: unit.targetHexQ,
+                                r: unit.targetHexR,
+                                text: `+${actualHarvest} ${resIcon}`,
+                                color: '#4ecca3'
+                            });
+                        }
+
                         if (currentHex.resourceAmount <= 0) {
                             // Depleted
                             currentHex.type = 'plain'; // Turn into plain
@@ -407,10 +419,21 @@ class HexRoom extends Room {
                     if (currentHex && currentHex.building === 'TC' && currentHex.owner === unit.owner) {
                         const playerState = this.state.players.get(unit.owner);
                         if (playerState) {
-                            playerState.wood += unit.inventory;
-                            log(`Unit ${unit.id} deposited ${unit.inventory} wood to TC. Total: ${playerState.wood}`);
+                            const deposited = unit.inventory;
+                            playerState.wood += deposited;
+                            log(`Unit ${unit.id} deposited ${deposited} wood to TC. Total: ${playerState.wood}`);
                             unit.inventory = 0;
                             unit.action = 'idle';
+
+                            const ownerClient = this.clients.find(c => c.userData.name === unit.owner);
+                            if (ownerClient && deposited > 0) {
+                                ownerClient.send("vfx", {
+                                    q: unit.targetHexQ,
+                                    r: unit.targetHexR,
+                                    text: `+${deposited} 🪵 В шкаф`,
+                                    color: '#f5a623'
+                                });
+                            }
                         }
                     } else {
                         unit.action = 'idle'; // TC was destroyed or something
