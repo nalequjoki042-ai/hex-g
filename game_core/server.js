@@ -37,6 +37,7 @@ db.exec(`
         id TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
         color TEXT NOT NULL,
+        type TEXT DEFAULT 'plain',
         captured_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
 
@@ -54,7 +55,7 @@ log("База данных SQLite инициализирована.");
 const stmts = {
     getHex:      db.prepare('SELECT * FROM hexes WHERE id = ?'),
     getAllHexes:  db.prepare('SELECT * FROM hexes'),
-    setHex:      db.prepare('INSERT OR REPLACE INTO hexes (id, owner, color) VALUES (?, ?, ?)'),
+    setHex:      db.prepare('INSERT OR REPLACE INTO hexes (id, owner, color, type) VALUES (?, ?, ?, ?)'),
     
     getPlayer:   db.prepare('SELECT * FROM players WHERE name = ?'),
     setPlayer:   db.prepare('INSERT OR IGNORE INTO players (name, color) VALUES (?, ?)'),
@@ -89,11 +90,27 @@ function getRandomColor() {
 class HexData extends Schema {}
 type("string")(HexData.prototype, "owner");
 type("string")(HexData.prototype, "color");
+type("string")(HexData.prototype, "type");
+
+class UnitData extends Schema {}
+type("string")(UnitData.prototype, "id");
+type("number")(UnitData.prototype, "x");
+type("number")(UnitData.prototype, "y");
+type("number")(UnitData.prototype, "hp");
+type("number")(UnitData.prototype, "maxHp");
+type("number")(UnitData.prototype, "inventory");
+type("number")(UnitData.prototype, "maxInventory");
+type("string")(UnitData.prototype, "type");
+type("string")(UnitData.prototype, "color");
+type("number")(UnitData.prototype, "targetHexQ");
+type("number")(UnitData.prototype, "targetHexR");
+type("string")(UnitData.prototype, "owner");
 
 class GameState extends Schema {
     constructor() {
         super();
         this.hexes = new MapSchema();
+        this.units = new MapSchema();
 
         // Загружаем все гексы из SQLite при старте
         const allHexes = stmts.getAllHexes.all();
@@ -101,12 +118,15 @@ class GameState extends Schema {
             const hexData = new HexData();
             hexData.owner = row.owner;
             hexData.color = row.color;
+            // Provide a default type if none exists in db
+            hexData.type = row.type || 'plain';
             this.hexes.set(row.id, hexData);
         }
         log(`Загружено ${allHexes.length} гексов из базы данных.`);
     }
 }
 type({ map: HexData })(GameState.prototype, "hexes");
+type({ map: UnitData })(GameState.prototype, "units");
 
 // ==========================================
 // 5. ИГРОВАЯ КОМНАТА
@@ -116,17 +136,65 @@ class HexRoom extends Room {
         this.setState(new GameState());
         log("Игровая комната создана.");
 
-        // Регенерация энергии каждую секунду
+        this.generateMap();
+
+        // Регенерация энергии и игровой цикл каждую секунду (для простоты)
+        // В реальном времени нужно обновлять чаще, но для RTS движения
+        // можно сделать 10 тиков в секунду
         this.setSimulationInterval(() => {
+            // Энергия (каждую секунду)
             this.clients.forEach(client => {
                 if (client.userData && client.userData.energy < 10) {
-                    client.userData.energy = Math.min(10, client.userData.energy + 0.2);
-                    client.send("energyUpdate", { 
-                        energy: Math.floor(client.userData.energy) 
-                    });
+                    client.userData.energy = Math.min(10, client.userData.energy + 0.02); // 0.02 * 10 = 0.2
+                    // Отправляем реже чтобы не спамить
+                    if (Math.random() < 0.1) {
+                        client.send("energyUpdate", {
+                            energy: Math.floor(client.userData.energy)
+                        });
+                    }
                 }
             });
-        }, 1000);
+
+            // Движение юнитов
+            this.state.units.forEach(unit => {
+                if (unit.targetHexQ !== null && unit.targetHexQ !== undefined) {
+                    // Переводим гекс в x/y для движения
+                    const hSize = 35; // default
+                    const targetX = hSize * Math.sqrt(3) * (unit.targetHexQ + unit.targetHexR / 2);
+                    const targetY = hSize * 3 / 2 * unit.targetHexR;
+
+                    const dx = targetX - unit.x;
+                    const dy = targetY - unit.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+
+                    let speed = 2; // скорость юнита за тик
+                    if (unit.type === 'fighter') speed = 1.5;
+
+                    if (dist > speed) {
+                        unit.x += (dx / dist) * speed;
+                        unit.y += (dy / dist) * speed;
+                    } else {
+                        unit.x = targetX;
+                        unit.y = targetY;
+                        unit.targetHexQ = null;
+                        unit.targetHexR = null;
+
+                        // Захват гекса или сбор ресурсов по прибытии
+                    }
+                }
+            });
+
+        }, 100);
+
+        // Перемещение юнита
+        this.onMessage("moveUnit", (client, message) => {
+            const { unitId, q, r } = message;
+            const unit = this.state.units.get(unitId);
+            if (unit && unit.owner === client.userData.name) {
+                unit.targetHexQ = q;
+                unit.targetHexR = r;
+            }
+        });
 
         // Обработка захвата гекса
         this.onMessage("claimHex", (client, message) => {
@@ -163,12 +231,43 @@ class HexRoom extends Room {
                 this.state.hexes.set(hexId, hexData);
 
                 // Сохраняем в SQLite (атомарная операция — данные не потеряются)
-                stmts.setHex.run(hexId, playerName, playerColor);
+                stmts.setHex.run(hexId, playerName, playerColor, currentHex ? currentHex.type : 'plain');
                 stmts.addCapture.run(playerName);
 
                 log(`[Захват] ${playerName} → гекс (${hexId})`);
             }
         });
+    }
+
+    generateMap() {
+        // Простая генерация карты: добавляем леса и горы на свободные гексы
+        // в радиусе 50
+        let generated = 0;
+        for (let q = -50; q <= 50; q++) {
+            for (let r = -50; r <= 50; r++) {
+                if (Math.abs(-q - r) > 50) continue;
+
+                const hexId = `${q},${r}`;
+                if (!this.state.hexes.has(hexId)) {
+                    let rNum = Math.random();
+                    let type = 'plain';
+                    if (rNum < 0.15) type = 'forest';
+                    else if (rNum < 0.25) type = 'mountain';
+                    else if (rNum < 0.26) type = 'ruins';
+
+                    if (type !== 'plain') {
+                        const hexData = new HexData();
+                        hexData.owner = "server";
+                        hexData.color = "#222222";
+                        hexData.type = type;
+                        this.state.hexes.set(hexId, hexData);
+                        stmts.setHex.run(hexId, hexData.owner, hexData.color, hexData.type);
+                        generated++;
+                    }
+                }
+            }
+        }
+        if (generated > 0) log(`Сгенерировано ${generated} новых гексов с ресурсами.`);
     }
 
     onJoin(client, options) {
@@ -197,6 +296,32 @@ class HexRoom extends Room {
             color: player.color,
             totalCaptures: player.total_captures
         });
+
+        // Спавн "Основателя" если у игрока еще нет юнитов
+        let hasUnits = false;
+        this.state.units.forEach(u => {
+            if (u.owner === name) hasUnits = true;
+        });
+
+        if (!hasUnits) {
+            const unit = new UnitData();
+            unit.id = Math.random().toString(36).substr(2, 9);
+            // Spawn far away from center (e.g., q=40, r=0)
+            const q = 40;
+            const r = 0;
+            const hSize = 35;
+            unit.x = hSize * Math.sqrt(3) * (q + r / 2);
+            unit.y = hSize * 3 / 2 * r;
+            unit.hp = 100;
+            unit.maxHp = 100;
+            unit.inventory = 0;
+            unit.maxInventory = 500;
+            unit.type = 'farmer';
+            unit.color = player.color;
+            unit.owner = name;
+            this.state.units.set(unit.id, unit);
+            log(`[Спавн] Основатель для ${name} на (${q}, ${r})`);
+        }
 
         log(`[Подключение] ${name} (цвет: ${player.color}) | Онлайн: ${this.clients.length}`);
     }
