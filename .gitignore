@@ -1,0 +1,16 @@
+# Зависимости
+node_modules/
+package-lock.json
+
+# Локальные файлы и логи
+server.log
+database.json
+
+# Бинарные файлы
+*.exe
+ngrok
+
+# Среда разработки
+.vscode/
+.idea/
+.DS_Store
