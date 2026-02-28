@@ -629,10 +629,22 @@
                 sorted.slice(0, 5).forEach(([name, data]) => {
                     const item = document.createElement('div');
                     item.className = 'leader-item';
-                    item.innerHTML = `
-                        <span><span class="leader-color" style="background: ${data.color}"></span>${name}</span>
-                        <span style="font-weight: bold">${data.count}</span>
-                    `;
+
+                    // Используем textContent для имени игрока для защиты от XSS
+                    const nameSpan = document.createElement('span');
+                    const colorCircle = document.createElement('span');
+                    colorCircle.className = 'leader-color';
+                    colorCircle.style.backgroundColor = data.color;
+                    
+                    nameSpan.appendChild(colorCircle);
+                    nameSpan.appendChild(document.createTextNode(name));
+
+                    const countSpan = document.createElement('span');
+                    countSpan.style.fontWeight = 'bold';
+                    countSpan.textContent = data.count;
+
+                    item.appendChild(nameSpan);
+                    item.appendChild(countSpan);
                     list.appendChild(item);
                 });
             } catch (e) { console.error("Leaderboard update error:", e); }

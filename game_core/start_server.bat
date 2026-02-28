@@ -1,11 +1,14 @@
 @echo off
+setlocal
 chcp 65001 >nul
 title Hex Game Server Launcher
-cd /d "%~dp0"
+pushd "%~dp0"
 
-echo [INFO] Проверка и установка библиотек...
+echo [INFO] Installing dependencies...
 call npm install
 
-echo [INFO] Запуск сервера...
-npm start
+echo [INFO] Starting server...
+call npm start
+
+popd
 pause
