@@ -2,9 +2,11 @@
 node_modules/
 package-lock.json
 
-# Локальные файлы и логи
-server.log
+# База данных
 database.json
+game.db
+game.db-wal
+game.db-shm
 
 # Бинарные файлы
 *.exe

@@ -857,10 +857,15 @@
                     document.getElementById('energy-fill').style.width = `${energyPercent}%`;
                     document.getElementById('energy-text').innerText = `Энергия: ${currentEnergy}/10`;
                     
-                    // Обновляем в меню, если оно открыто
                     if (document.getElementById('player-menu').classList.contains('active')) {
                         document.getElementById('stat-energy').innerText = `${currentEnergy}/10`;
                     }
+                });
+
+                // Слушаем информацию об игроке (из SQLite)
+                gameRoom.onMessage("playerInfo", (data) => {
+                    console.log("Player registered:", data);
+                    // Можно использовать для отображения общего кол-ва захватов
                 });
 
                 // Слушаем ошибки
